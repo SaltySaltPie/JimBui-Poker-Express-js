@@ -4,7 +4,13 @@ import { RemoteSocket } from "socket.io";
 import { io } from "../../app";
 import { pgClients } from "../../config/postgres";
 import { TUnknownObj, TUserCache } from "../../types/common";
-import { TPokerPgRoomSchema, TPokerPlayerHand, TPokerRoomData, TPokerRound } from "../../types/poker/types";
+import {
+   TPokerPgRoomSchema,
+   TPokerPlayerHand,
+   TPokerRoomData,
+   TPokerRound,
+   TPokerScoreboardLine,
+} from "../../types/poker/types";
 import JSONtryParse from "../../utils/js/JSONtryParse";
 import { TLibUserUser, libUser_getUsers } from "../user/lib";
 import pgInsertOrUpdateOnConflict from "../../utils/postgres/pgInsertOrUpdateOnConflict";
@@ -30,7 +36,7 @@ type TLibPoker_calculateHandsParams = {
 
 export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTickParams) => {
    const { clientRoom, rawRoom, serverRoom } = await libPoker_getRoomData({ rid });
-   const { data } = serverRoom;
+   const { data, players } = serverRoom;
    const {
       nextTimeOut,
       player_action,
@@ -39,12 +45,13 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
       play_order_index,
       stake,
       pot,
-      round_pot,
+      round_pot = [],
       round,
       deck,
-      community_cards,
+      community_cards = [],
       player_hands,
       sb_index,
+      scoreboard = [],
    } = data;
    if (!player_action) return; //TODO: polling logic here
    const seatIndex = play_order[play_order_index];
@@ -59,6 +66,7 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
    let next_deck = deck;
    let next_community_cards = community_cards;
    let next_player_hands = player_hands;
+   let next_scoreboard = scoreboard;
 
    if (player_action === "call") {
       next_round_pot.splice(seatIndex, 1, stake);
@@ -82,12 +90,38 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
    const handleWinners = () => {
       console.log("Handling Winners!");
 
+      pot.forEach((potAmount, seat) => {
+         if (!potAmount) return;
+         const player = players[seat] as TLibUserUser;
+         const scoreboardLineIndex = scoreboard.findIndex((scEntry) => scEntry.sub === player.sub);
+         const scoreboardLine: TPokerScoreboardLine =
+            scoreboardLineIndex > -1
+               ? { sub: player.sub, name: player.name || player.sub, alpha: 0 }
+               : scoreboard[scoreboardLineIndex];
+         const new_scoreboardLine = { ...scoreboardLine, alpha: scoreboardLine.alpha - potAmount };
+         if (scoreboardLineIndex > -1) next_scoreboard.push(new_scoreboardLine);
+         else next_scoreboard.splice(scoreboardLineIndex, 1, new_scoreboardLine);
+      });
+
       const winningRank = Math.max(...next_player_hands.map((hand) => (hand ? hand.rank : 0)));
-      const winningSeat = next_play_order.filter((seatIndex) => next_player_hands[seatIndex]?.rank === winningRank);
+      const winningSeats = next_play_order.filter((seatIndex) => next_player_hands[seatIndex]?.rank === winningRank);
       if (next_play_order.length > 1)
          next_player_hands = next_player_hands.map((hand, i) =>
-            winningSeat.includes(i) && hand ? { ...hand, show: true } : hand
+            winningSeats.includes(i) && hand ? { ...hand, show: true } : hand
          );
+      const totalPot = pot.reduce((prev, curr) => (prev || 0) + (curr || 0), 0) as number;
+
+      winningSeats.forEach((seatIndex) => {
+         const player = players[seatIndex] as TLibUserUser;
+         const scoreboardLineIndex = scoreboard.findIndex((scEntry) => scEntry.sub === player.sub);
+         const scoreboardLine: TPokerScoreboardLine =
+            scoreboardLineIndex > -1
+               ? { sub: player.sub, name: player.name || player.sub, alpha: 0 }
+               : scoreboard[scoreboardLineIndex];
+         const new_scoreboardLine = { ...scoreboardLine, alpha: scoreboardLine.alpha + totalPot };
+         if (scoreboardLineIndex > -1) next_scoreboard.push(new_scoreboardLine);
+         else next_scoreboard.splice(scoreboardLineIndex, 1, new_scoreboardLine);
+      });
    };
 
    if (next_play_order.length === 1) {
@@ -151,6 +185,7 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
       deck: next_deck,
       community_cards: next_community_cards,
       player_hands: next_player_hands,
+      scoreboard: next_scoreboard,
    };
    console.log({ next_RoomData });
    const pgPayload: { rid: string; data: TPokerRoomData } = {

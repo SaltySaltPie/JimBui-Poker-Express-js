@@ -1,6 +1,6 @@
 export type TPokerPgRoomSchema = {
    rid: string;
-   status: string
+   status: string;
    players: (string | null)[];
    data: string;
    last_update: number;
@@ -11,10 +11,7 @@ export type TPokerRoomData = {
    rid: string;
    created_by: string;
    created_at: string;
-   scoreboard: {
-      sub: string;
-      alpha: number;
-   }[];
+   scoreboard: TPokerScoreboardLine[];
 
    //@ GAME LEVEL
    round: TPokerRound;
@@ -47,6 +44,12 @@ export type TPokerRoomData = {
    //*                     0              3  4              7
    round_pot: (number | null)[]; //[30, null, null,30,30, null, null,30, null]
 };
+
+export type TPokerScoreboardLine = {
+   sub: string;
+   name: string;
+   alpha: number;
+}
 
 export type TPokerRound = "pre" | "flop" | "turn" | "river" | "post";
 
