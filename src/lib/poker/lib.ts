@@ -82,6 +82,7 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
       next_round_pot.splice(seatIndex, 1, next_stake);
 
       next_play_order = [...play_order.slice(play_order_index), ...play_order.slice(0, play_order_index)];
+      console.log({ next_play_order });
       next_play_order_index = 1;
    }
 
@@ -159,6 +160,9 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
          hands: next_player_hands.map((hand) => (hand ? hand.cards : null)),
          community_cards: next_community_cards,
       });
+
+      next_round_pot = [...Array(9)].map(() => 0);
+
       if (next_round === "post") {
          //* get player ranking
          handleWinners();
@@ -167,7 +171,7 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
          await libPoker_startRoom({ rid });
          return;
       }
-   } else {
+   } else if (player_action !== "raise") {
       next_play_order_index = play_order_index + 1;
    }
 
@@ -216,11 +220,11 @@ export const libPoker_startRoom = async ({ rid }: TLibPoker_startRoomParams) => 
 
    // const seatSubs = players.map((player) => (player ? player.sub : null));
    const seatIndices = players.map((player, i) => (player ? i : null));
-   const seatIndicesNoNull = seatIndices.filter(Boolean) as number[];
+   const seatIndicesNoNull = seatIndices.filter((seatIndex) => seatIndex != null) as number[];
    const playerCount = players.filter(Boolean).length;
 
    const new_status = "playing";
-
+   console.log({ seatIndices, seatIndicesNoNull, playerCount });
    if (playerCount < 2) return { error: "Not enough players" };
    const next_sb_index = jsArrayFindNextNonNull(seatIndices, sb_index || -1);
    // * finding bb index in no null indices
@@ -228,7 +232,9 @@ export const libPoker_startRoom = async ({ rid }: TLibPoker_startRoomParams) => 
    const new_play_order = [...Array(playerCount)].map((_, i) =>
       jsArrayFindNextNonNull(seatIndicesNoNull, sbNoNullIndex + i)
    );
+   console.log({ new_play_order });
    new_play_order.push(new_play_order.shift() as number);
+   console.log({ new_play_order });
    const new_play_order_index = 0;
 
    const new_round = "pre";
