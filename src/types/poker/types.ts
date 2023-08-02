@@ -1,3 +1,5 @@
+import { TLibUserUser } from "../../lib/user/lib";
+
 export type TPokerPgRoomSchema = {
    rid: string;
    status: string;
@@ -22,6 +24,7 @@ export type TPokerRoomData = {
    }[];
    //*                                  [0   , null , null, 3,    4,    null, null, 7,    null]
    // sit_players : string[] // sub[] : [sub1, null , null, sub2, sub3, null, null, sub4, null]
+   game_players: (TLibUserUser | null)[];
 
    // ? sb seat index
    sb_index: number; // sub2 : 3
@@ -49,7 +52,7 @@ export type TPokerScoreboardLine = {
    sub: string;
    name: string;
    alpha: number;
-}
+};
 
 export type TPokerRound = "pre" | "flop" | "turn" | "river" | "post";
 

@@ -36,9 +36,10 @@ type TLibPoker_calculateHandsParams = {
 
 export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTickParams) => {
    const { clientRoom, rawRoom, serverRoom } = await libPoker_getRoomData({ rid });
-   const { data, players } = serverRoom;
+   const { data } = serverRoom;
    const {
       nextTimeOut,
+      game_players,
       player_action,
       player_action_amount,
       play_order,
@@ -90,20 +91,21 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
 
    const handleWinners = () => {
       console.log("Handling Winners!");
-
       pot.forEach((potAmount, seat) => {
          if (!potAmount) return;
-         const player = players[seat] as TLibUserUser;
+         console.log({ before: next_scoreboard });
+         const player = game_players[seat] as TLibUserUser;
          const scoreboardLineIndex = scoreboard.findIndex((scEntry) => scEntry.sub === player.sub);
+         console.log({ scoreboardLineIndex });
          const scoreboardLine: TPokerScoreboardLine =
             scoreboardLineIndex > -1
-               ? { sub: player.sub, name: player.name || player.sub, alpha: 0 }
-               : scoreboard[scoreboardLineIndex];
+               ? scoreboard[scoreboardLineIndex]
+               : { sub: player.sub, name: player.name || player.sub, alpha: 0 };
          const new_scoreboardLine = { ...scoreboardLine, alpha: scoreboardLine.alpha - potAmount };
-         if (scoreboardLineIndex > -1) next_scoreboard.push(new_scoreboardLine);
-         else next_scoreboard.splice(scoreboardLineIndex, 1, new_scoreboardLine);
+         if (scoreboardLineIndex > -1) next_scoreboard.splice(scoreboardLineIndex, 1, new_scoreboardLine);
+         else next_scoreboard.push(new_scoreboardLine);
+         console.log({ after: next_scoreboard });
       });
-
       const winningRank = Math.max(...next_player_hands.map((hand) => (hand ? hand.rank : 0)));
       const winningSeats = next_play_order.filter((seatIndex) => next_player_hands[seatIndex]?.rank === winningRank);
       if (next_play_order.length > 1)
@@ -113,15 +115,15 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
       const totalPot = pot.reduce((prev, curr) => (prev || 0) + (curr || 0), 0) as number;
 
       winningSeats.forEach((seatIndex) => {
-         const player = players[seatIndex] as TLibUserUser;
+         const player = game_players[seatIndex] as TLibUserUser;
          const scoreboardLineIndex = scoreboard.findIndex((scEntry) => scEntry.sub === player.sub);
          const scoreboardLine: TPokerScoreboardLine =
             scoreboardLineIndex > -1
                ? { sub: player.sub, name: player.name || player.sub, alpha: 0 }
                : scoreboard[scoreboardLineIndex];
          const new_scoreboardLine = { ...scoreboardLine, alpha: scoreboardLine.alpha + totalPot };
-         if (scoreboardLineIndex > -1) next_scoreboard.push(new_scoreboardLine);
-         else next_scoreboard.splice(scoreboardLineIndex, 1, new_scoreboardLine);
+         if (scoreboardLineIndex > -1) next_scoreboard.splice(scoreboardLineIndex, 1, new_scoreboardLine);
+         else next_scoreboard.push(new_scoreboardLine);
       });
    };
 
@@ -131,6 +133,7 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
    }
    if (isLastPlayerOrder && player_action !== "raise" && next_play_order.length > 1) {
       console.log(`Last play order`);
+      next_stake = 0;
       next_round =
          round === "pre"
             ? "flop"
@@ -147,8 +150,7 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
          : next_play_order.reduce((prev, curr) => (curr > sb_index ? (curr < prev ? curr : prev) : 0), 0) ||
            Math.min(...next_play_order);
       const goFirstSeatIndex = next_play_order.findIndex((seat) => seat === goFirstSeat);
-      next_play_order.sort();
-      next_play_order.push(...next_play_order.splice(0, goFirstSeatIndex));
+      next_play_order = [...next_play_order.slice(goFirstSeatIndex), ...next_play_order.slice(0, goFirstSeatIndex)];
       next_play_order_index = 0;
 
       next_pot = next_round_pot.map((seatPot, i) => (seatPot != null ? seatPot + (next_pot[i] || 0) : next_pot[i]));
@@ -219,22 +221,20 @@ export const libPoker_startRoom = async ({ rid }: TLibPoker_startRoomParams) => 
    if (status !== "idle") return { error: "Room is not idling" };
 
    // const seatSubs = players.map((player) => (player ? player.sub : null));
-   const seatIndices = players.map((player, i) => (player ? i : null));
+   const new_game_players = players;
+   const seatIndices = new_game_players.map((player, i) => (player ? i : null));
    const seatIndicesNoNull = seatIndices.filter((seatIndex) => seatIndex != null) as number[];
-   const playerCount = players.filter(Boolean).length;
+   const playerCount = new_game_players.filter(Boolean).length;
 
    const new_status = "playing";
-   console.log({ seatIndices, seatIndicesNoNull, playerCount });
    if (playerCount < 2) return { error: "Not enough players" };
-   const next_sb_index = jsArrayFindNextNonNull(seatIndices, sb_index || -1);
+   const new_sb_index = jsArrayFindNextNonNull(seatIndices, sb_index || -1);
    // * finding bb index in no null indices
-   const sbNoNullIndex = seatIndicesNoNull.findIndex((index) => next_sb_index === index);
+   const sbNoNullIndex = seatIndicesNoNull.findIndex((index) => new_sb_index === index);
    const new_play_order = [...Array(playerCount)].map((_, i) =>
       jsArrayFindNextNonNull(seatIndicesNoNull, sbNoNullIndex + i)
    );
-   console.log({ new_play_order });
    new_play_order.push(new_play_order.shift() as number);
-   console.log({ new_play_order });
    const new_play_order_index = 0;
 
    const new_round = "pre";
@@ -242,7 +242,7 @@ export const libPoker_startRoom = async ({ rid }: TLibPoker_startRoomParams) => 
 
    const new_deck = libPoker_generateCardDeck().shuffledDeck;
    const new_player_hands = libPoker_calculateHands({
-      hands: seatIndices.map((seat) => (seat ? new_deck.splice(0, 2) : null)),
+      hands: seatIndices.map((seat) => (seat != null ? new_deck.splice(0, 2) : null)),
    });
 
    const new_stake = 2;
@@ -255,7 +255,8 @@ export const libPoker_startRoom = async ({ rid }: TLibPoker_startRoomParams) => 
 
    const newData: TPokerRoomData = {
       ...data,
-      sb_index: next_sb_index,
+      game_players: new_game_players,
+      sb_index: new_sb_index,
       play_order: new_play_order,
       play_order_index: new_play_order_index,
       round: new_round,
@@ -329,7 +330,7 @@ export const libPoker_getRoomData = async ({ rid }: TLibPoker_getRoomData) => {
       [rid]
    );
    const players = await libUser_getUsers({ subs: rawRoom.players.filter(Boolean) as string[] }).then(({ players }) =>
-      rawRoom.players.map((sub) => players.find((player) => player.sub === sub))
+      rawRoom.players.map((sub) => players.find((player) => player?.sub === sub) || null)
    );
    const parsedRoomData = JSONtryParse<TPokerRoomData>(rawRoom?.data, {});
 
@@ -341,13 +342,13 @@ export const libPoker_getRoomData = async ({ rid }: TLibPoker_getRoomData) => {
 };
 
 export type TLibPokerServerRoomData = {
-   players: (TLibUserUser | undefined)[];
+   players: (TLibUserUser | null)[];
    status: string;
    data: TPokerRoomData;
    last_update?: number;
 };
 export type TLibPokerClientRoomData = {
-   players: (TLibUserUser | undefined)[];
+   players: (TLibUserUser | null)[];
    status: string;
    data: Partial<TPokerRoomData>;
 };
