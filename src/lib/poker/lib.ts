@@ -104,13 +104,12 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
          const new_scoreboardLine = { ...scoreboardLine, alpha: scoreboardLine.alpha - potAmount };
          if (scoreboardLineIndex > -1) next_scoreboard.splice(scoreboardLineIndex, 1, new_scoreboardLine);
          else next_scoreboard.push(new_scoreboardLine);
-         console.log({ after: next_scoreboard });
       });
       const winningRank = Math.max(...next_player_hands.map((hand) => (hand ? hand.rank : 0)));
       const winningSeats = next_play_order.filter((seatIndex) => next_player_hands[seatIndex]?.rank === winningRank);
       if (next_play_order.length > 1)
          next_player_hands = next_player_hands.map((hand, i) =>
-            winningSeats.includes(i) && hand ? { ...hand, show: true } : hand
+            winningSeats.includes(i) && hand ? { ...hand, show: true, winner: true } : hand
          );
       const totalPot = pot.reduce((prev, curr) => (prev || 0) + (curr || 0), 0) as number;
 
@@ -119,8 +118,8 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
          const scoreboardLineIndex = scoreboard.findIndex((scEntry) => scEntry.sub === player.sub);
          const scoreboardLine: TPokerScoreboardLine =
             scoreboardLineIndex > -1
-               ? { sub: player.sub, name: player.name || player.sub, alpha: 0 }
-               : scoreboard[scoreboardLineIndex];
+               ? scoreboard[scoreboardLineIndex]
+               : { sub: player.sub, name: player.name || player.sub, alpha: 0 };
          const new_scoreboardLine = { ...scoreboardLine, alpha: scoreboardLine.alpha + totalPot };
          if (scoreboardLineIndex > -1) next_scoreboard.splice(scoreboardLineIndex, 1, new_scoreboardLine);
          else next_scoreboard.push(new_scoreboardLine);
@@ -144,7 +143,6 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
             : round === "river"
             ? "post"
             : "pre";
-      console.log({ next_play_order, sb_index });
       const goFirstSeat = next_play_order.includes(sb_index)
          ? sb_index
          : next_play_order.reduce((prev, curr) => (curr > sb_index ? (curr < prev ? curr : prev) : 0), 0) ||
@@ -166,6 +164,7 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
       next_round_pot = [...Array(9)].map(() => 0);
 
       if (next_round === "post") {
+         next_play_order_index = -1;
          //* get player ranking
          handleWinners();
       }

@@ -63,4 +63,5 @@ export type TPokerPlayerHand = {
    desc: string;
    rank: number;
    show?: boolean;
+   winner?: boolean;
 };
