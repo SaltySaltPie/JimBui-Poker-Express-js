@@ -162,9 +162,9 @@ export const pkRoomStart = async (req: Request, res: Response) => {
    if (!rid) return res.status(400).json({ src, error: "Missing rid" });
    try {
       const result = await libPoker_startRoom({ rid });
-      if (result?.error) 
-         return res.status(400).json({ src, error: result.error });
-      
+      setTimeout(() => libPoker_resolveGameTick({ rid }), 1000);
+      if (result?.error) return res.status(400).json({ src, error: result.error });
+
       return res.status(200).json({});
    } catch (error) {
       console.log({ src, error });
@@ -205,9 +205,9 @@ export const pkRoomAction = async (req: Request, res: Response) => {
 
       if (!updatedRows) return res.status(400).json({ src, error: "Action could not be completed" });
 
-      //TODO REMOVE THIS
-      await libPoker_resolveGameTick({rid})
-      
+      // TODO REMOVE THIS
+      // await libPoker_resolveGameTick({rid})
+
       return res.status(200).json({});
    } catch (error) {
       console.log({ src, error });

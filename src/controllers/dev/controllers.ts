@@ -24,6 +24,7 @@ export const devRoute2 = async (req: Request, res: Response) => {
    const src = "devRoute2";
    try {
       await libPoker_resolveGameTick({ rid: "pk.2" });
+      // await pgClients["casino"].none(`UPDATE poker_rooms SET players=$1 WHERE rid=$2`, [[...Array(9)].map(() => null), "pk.2"]);
       return res.status(200).json({});
    } catch (error) {
       console.log({ src, error });

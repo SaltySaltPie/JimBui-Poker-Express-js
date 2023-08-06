@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { pkRoomAction, pkRoomGetAllRooms, pkRoomJoinARoom, pkRoomSitDown, pkRoomStandUp, pkRoomStart } from "../../controllers/pokerControllers";
+import { pkRoomAction, pkRoomGetAllRooms, pkRoomJoinARoom, pkRoomSitDown, pkRoomStandUp, pkRoomStart } from "../../controllers/poker/controllers";
 
 const pokerRouter = Router();
 

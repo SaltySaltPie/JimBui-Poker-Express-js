@@ -54,7 +54,19 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
       sb_index,
       scoreboard = [],
    } = data;
-   if (!player_action) return; //TODO: polling logic here
+
+   // if (round === "post" && Date.now() > nextTimeOut) {
+   //    console.log("starting new game");
+   //    await libPoker_startRoom({ rid });
+   //    return;
+   // }
+   const isTimedOut = Date.now() - nextTimeOut > 2000;
+   if (!player_action && !isTimedOut) {
+      setTimeout(() => libPoker_resolveGameTick({ rid }), 1000);
+      //TODO: polling logic here
+      return;
+   }
+
    const seatIndex = play_order[play_order_index];
 
    let next_pot = pot;
@@ -75,7 +87,7 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
    if (player_action === "check") {
       next_play_order_index === play_order_index + 1;
    }
-   if (player_action === "fold") {
+   if (player_action === "fold" || isTimedOut) {
       next_play_order = next_play_order.filter((seatNum) => seatNum !== seatIndex);
    }
    if (player_action === "raise") {
@@ -91,7 +103,7 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
 
    const handleWinners = () => {
       console.log("Handling Winners!");
-      pot.forEach((potAmount, seat) => {
+      next_pot.forEach((potAmount, seat) => {
          if (!potAmount) return;
          console.log({ before: next_scoreboard });
          const player = game_players[seat] as TLibUserUser;
@@ -111,7 +123,7 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
          next_player_hands = next_player_hands.map((hand, i) =>
             winningSeats.includes(i) && hand ? { ...hand, show: true, winner: true } : hand
          );
-      const totalPot = pot.reduce((prev, curr) => (prev || 0) + (curr || 0), 0) as number;
+      const totalPot = next_pot.reduce((prev, curr) => (prev || 0) + (curr || 0), 0) as number;
 
       winningSeats.forEach((seatIndex) => {
          const player = game_players[seatIndex] as TLibUserUser;
@@ -126,8 +138,10 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
       });
    };
 
-   if (next_play_order.length === 1) {
-      next_round === "post";
+   if (next_play_order.length === 1 && next_round !== "post") {
+      next_round = "post";
+      next_pot = next_round_pot.map((seatPot, i) => (seatPot != null ? seatPot + (next_pot[i] || 0) : next_pot[i]));
+
       handleWinners();
    }
    if (isLastPlayerOrder && player_action !== "raise" && next_play_order.length > 1) {
@@ -168,14 +182,9 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
          //* get player ranking
          handleWinners();
       }
-      if (next_round === "pre") {
-         await libPoker_startRoom({ rid });
-         return;
-      }
    } else if (player_action !== "raise") {
       next_play_order_index = play_order_index + 1;
    }
-
    const next_RoomData: TPokerRoomData = {
       ...data,
       pot: next_pot,
@@ -208,6 +217,7 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
 
    // * updating latest game state to sockets in room
    await libPoker_updateRoomDataForPlayers({ roomData: { ...serverRoom, data: next_RoomData }, rid });
+   if (next_round !== "post") setTimeout(() => libPoker_resolveGameTick({ rid }), 1000);
 };
 type TLibPoker_resolveGameTickParams = {
    rid: string;
@@ -216,24 +226,23 @@ type TLibPoker_resolveGameTickParams = {
 export const libPoker_startRoom = async ({ rid }: TLibPoker_startRoomParams) => {
    const { serverRoom } = await libPoker_getRoomData({ rid });
    const { status, data, players } = serverRoom;
-   const { sb_index } = data;
-   if (status !== "idle") return { error: "Room is not idling" };
+   const { sb_index, round } = data;
+   if (status !== "idle" && round !== "post") return { error: "Room is not idling" };
 
    // const seatSubs = players.map((player) => (player ? player.sub : null));
    const new_game_players = players;
-   const seatIndices = new_game_players.map((player, i) => (player ? i : null));
-   const seatIndicesNoNull = seatIndices.filter((seatIndex) => seatIndex != null) as number[];
+   const seats = new_game_players.map((player, i) => (player ? i : null));
+   const seatsNoNull = seats.filter((seatIndex) => seatIndex != null) as number[];
    const playerCount = new_game_players.filter(Boolean).length;
 
    const new_status = "playing";
    if (playerCount < 2) return { error: "Not enough players" };
-   const new_sb_index = jsArrayFindNextNonNull(seatIndices, sb_index || -1);
-   // * finding bb index in no null indices
-   const sbNoNullIndex = seatIndicesNoNull.findIndex((index) => new_sb_index === index);
-   const new_play_order = [...Array(playerCount)].map((_, i) =>
-      jsArrayFindNextNonNull(seatIndicesNoNull, sbNoNullIndex + i)
+   const new_sb_index = seatsNoNull.reduce(
+      (prev, curr) => (curr > sb_index && (prev < sb_index || prev === sb_index) ? curr : prev),
+      Math.min(...seatsNoNull)
    );
-   new_play_order.push(new_play_order.shift() as number);
+   const seatOrderIndex = seatsNoNull.findIndex((seat) => seat === new_sb_index);
+   const new_play_order = [...seatsNoNull.slice(seatOrderIndex), ...seatsNoNull.slice(0, seatOrderIndex)];
    const new_play_order_index = 0;
 
    const new_round = "pre";
@@ -241,7 +250,7 @@ export const libPoker_startRoom = async ({ rid }: TLibPoker_startRoomParams) => 
 
    const new_deck = libPoker_generateCardDeck().shuffledDeck;
    const new_player_hands = libPoker_calculateHands({
-      hands: seatIndices.map((seat) => (seat != null ? new_deck.splice(0, 2) : null)),
+      hands: seats.map((seat) => (seat != null ? new_deck.splice(0, 2) : null)),
    });
 
    const new_stake = 2;
@@ -266,6 +275,7 @@ export const libPoker_startRoom = async ({ rid }: TLibPoker_startRoomParams) => 
       round_pot: new_round_pot,
       pot: [],
       stake: new_stake,
+      player_action: null,
    };
    console.log({ newData });
    // * update data on PG for this room
