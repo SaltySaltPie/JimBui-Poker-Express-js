@@ -206,8 +206,26 @@ export const pkRoomAction = async (req: Request, res: Response) => {
       if (!updatedRows) return res.status(400).json({ src, error: "Action could not be completed" });
 
       // TODO REMOVE THIS
-      // await libPoker_resolveGameTick({rid})
+      await libPoker_resolveGameTick({ rid });
 
+      return res.status(200).json({});
+   } catch (error) {
+      console.log({ src, error });
+      return res.status(500).json({ error });
+   }
+};
+
+export const pkRoomPostRabbit = async (req: Request, res: Response) => {
+   const src = "pkRoomPostRabbit";
+   const { sid, sub, name, rid: userRid } = res.locals.user;
+   const { rid } = req.params;
+   if (rid !== userRid) return res.status(400).json({ src, error: "You are not in this room" });
+   try {
+      const { serverRoom } = await libPoker_getRoomData({ rid });
+      const { data } = serverRoom;
+      const { round } = data;
+      if (round !== "post") return res.status(400).json({ src, error: "Round is not Post yet" });
+      await pgClients["casino"].none(`UPDATE poker_rooms SET post_actions = post_actions || $1`, [{ type: "rabbit" }]);
       return res.status(200).json({});
    } catch (error) {
       console.log({ src, error });

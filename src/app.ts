@@ -6,7 +6,7 @@ import express from "express";
 import cors from "cors";
 import morgan from "morgan";
 import cookieParser from "cookie-parser";
-import devRouter from "./routers/devRouter";
+import devRouter from "./routers/dev/router";
 import { Server } from "socket.io";
 import http from "http";
 import pokerRouter from "./routers/pokerRouter";

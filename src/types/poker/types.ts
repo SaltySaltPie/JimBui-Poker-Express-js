@@ -6,7 +6,14 @@ export type TPokerPgRoomSchema = {
    players: (string | null)[];
    data: string;
    last_update: number;
+   post_actions: string[] | null;
 };
+export type TPokerPostActionParsed = {
+   type: "rabbit" | "show";
+   seat?: number;
+};
+
+export type TPokerPlayerAction = "call" | "fold" | "check" | "raise" | null;
 
 export type TPokerRoomData = {
    //@ ROOM LEVEL
@@ -35,8 +42,11 @@ export type TPokerRoomData = {
    // ? index of the current possition in play_order
    play_order_index: number; // order index : 0
 
-   player_action: "call" | "fold" | "check" | "raise" | null;
+   player_action: TPokerPlayerAction;
+   previous_player_action: TPokerPlayerAction;
    player_action_amount: number | null;
+   players_action: TPokerPlayerAction[];
+   winnerSeats: number[];
 
    community_cards: string[]; // [3h,Jd,As,Qc] (turn)
    deck: string[]; // [As,...] //@SENSITIVE
@@ -63,5 +73,4 @@ export type TPokerPlayerHand = {
    desc: string;
    rank: number;
    show?: boolean;
-   winner?: boolean;
 };
