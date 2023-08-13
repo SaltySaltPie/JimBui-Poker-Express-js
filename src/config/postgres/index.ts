@@ -5,4 +5,4 @@ export const pgp = pgPromise();
 export const pgClients = {
    casino: pgp({ host: PG_HOST, password: PG_PASS, user: PG_USER, port: Number(PG_PORT || 5432), database: "casino" }),
 };
-export type TPgClient = "casino";
+export type TPgDb = "casino";

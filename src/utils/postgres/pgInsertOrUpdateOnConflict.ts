@@ -1,11 +1,11 @@
-import { TPgClient, pgClients, pgp } from "../../config/postgres";
+import { TPgDb, pgClients, pgp } from "../../config/postgres";
 import { TUnknownObj } from "../../types/common";
 import spliceArray from "../js/spliceArray";
 
 const pgInsertOrUpdateOnConflict = async ({
    inputs,
    table,
-   client,
+   db,
    columns,
    conflictCols = ["hs_object_id"],
 }: IpgInsertOrUpdate) => {
@@ -19,7 +19,7 @@ const pgInsertOrUpdateOnConflict = async ({
    for (let i = 0; i < splicedInputs.length; i++) {
       const splicedInput = splicedInputs[i];
       const query = pgp.helpers.insert(splicedInput, colSet) + onConflict;
-      await pgClients[client].query(query);
+      await pgClients[db].query(query);
    }
 };
 
@@ -29,5 +29,5 @@ interface IpgInsertOrUpdate {
    inputs: TUnknownObj[];
    columns: string[];
    conflictCols?: string[];
-   client: TPgClient;
+   db: TPgDb;
 }

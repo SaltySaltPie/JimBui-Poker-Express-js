@@ -1,21 +1,26 @@
 import { TLibUserUser } from "../../lib/user/lib";
 
-export type TPokerPgRoomSchema = {
+export type TPg_PokerRoomSchema = {
    rid: string;
-   status: string;
+   status: 'idle' | 'playing';
    players: (string | null)[];
    data: string;
    last_update: number;
    post_actions: string[] | null;
+   config: string;
 };
 export type TPokerPostActionParsed = {
-   type: "rabbit" | "show";
+   type: "rabbit" | "show" | 'standup';
    seat?: number;
 };
 
 export type TPokerPlayerAction = "call" | "fold" | "check" | "raise" | null;
 
-export type TPokerRoomData = {
+export type TPokerRoomConfigParsed = {
+   timeoutMs: number;
+};
+
+export type TPokerRoomDataParsed = {
    //@ ROOM LEVEL
    rid: string;
    created_by: string;

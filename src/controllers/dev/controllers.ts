@@ -26,15 +26,15 @@ export const devRoute1 = async (req: Request, res: Response) => {
 export const devRoute2 = async (req: Request, res: Response) => {
    const src = "devRoute2";
    try {
-      // await libPoker_resolveGameTick({ rid: "pk.2" });
+      await libPoker_resolveGameTick({ rid: "pk.2", pollId: Date.now() });
       // await pgClients["casino"].none(`UPDATE poker_rooms SET players=$1 WHERE rid=$2`, [[...Array(9)].map(() => null), "pk.2"]);
-      const hand1 = ["6c", "8h"];
-      const hand2 = ["3h", "8d"];
-      const cards = ["6d", "Tc", "2h", "5s", "4h"];
-      const test = Hand.winners([Hand.solve([...hand1, ...cards]), Hand.solve([...hand2, ...cards])])
-         .map(({ cards }: TPokerSolverSolved) => cards.map((card) => card.value + card.suit))
-         .flat();
-      return res.status(200).json({ test });
+      // const hand1 = ["6c", "8h"];
+      // const hand2 = ["3h", "8d"];
+      // const cards = ["6d", "Tc", "2h", "5s", "4h"];
+      // const test = Hand.winners([Hand.solve([...hand1, ...cards]), Hand.solve([...hand2, ...cards])])
+      //    .map(({ cards }: TPokerSolverSolved) => cards.map((card) => card.value + card.suit))
+      //    .flat();
+      return res.status(200).json({  });
    } catch (error) {
       console.log({ src, error });
       return res.status(500).json({ error });

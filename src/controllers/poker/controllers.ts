@@ -13,7 +13,7 @@ import {
    libPoker_startRoom,
    libPoker_updateRoomDataForPlayers,
 } from "../../lib/poker/lib";
-import { TPokerPlayerHand, TPokerRoomData } from "../../types/poker/types";
+import { TPokerPlayerHand, TPokerRoomDataParsed } from "../../types/poker/types";
 import { jsArrayFindNextNonNull } from "../../utils/js/jsArrayFindNextNonNull";
 import pgInsertOrUpdateOnConflict from "../../utils/postgres/pgInsertOrUpdateOnConflict";
 import { TPokerSolverSolved } from "../../types/pokersolver";
@@ -161,8 +161,7 @@ export const pkRoomStart = async (req: Request, res: Response) => {
    const { rid } = req.params;
    if (!rid) return res.status(400).json({ src, error: "Missing rid" });
    try {
-      const result = await libPoker_startRoom({ rid });
-      setTimeout(() => libPoker_resolveGameTick({ rid }), 1000);
+      const result = await libPoker_startRoom({ rid, config: { timeoutMs: 10000 } });
       if (result?.error) return res.status(400).json({ src, error: result.error });
 
       return res.status(200).json({});
@@ -194,7 +193,7 @@ export const pkRoomAction = async (req: Request, res: Response) => {
       if (!seatSub || seatSub !== sub || status !== "playing" || !isLegal)
          return res.status(400).json({ src, error: "Not Allowed" });
 
-      const newData: TPokerRoomData = { ...data, player_action: action, player_action_amount: raise };
+      const newData: TPokerRoomDataParsed = { ...data, player_action: action, player_action_amount: raise };
       const updatedRows = await pgClients["casino"]
          .query(
             `UPDATE poker_rooms 
@@ -204,9 +203,6 @@ export const pkRoomAction = async (req: Request, res: Response) => {
          .then((rows) => rows.length);
 
       if (!updatedRows) return res.status(400).json({ src, error: "Action could not be completed" });
-
-      // TODO REMOVE THIS
-      await libPoker_resolveGameTick({ rid });
 
       return res.status(200).json({});
    } catch (error) {
@@ -222,10 +218,35 @@ export const pkRoomPostRabbit = async (req: Request, res: Response) => {
    if (rid !== userRid) return res.status(400).json({ src, error: "You are not in this room" });
    try {
       const { serverRoom } = await libPoker_getRoomData({ rid });
-      const { data } = serverRoom;
-      const { round } = data;
+      const { data } = serverRoom || {};
+      const { round } = data || {};
       if (round !== "post") return res.status(400).json({ src, error: "Round is not Post yet" });
-      await pgClients["casino"].none(`UPDATE poker_rooms SET post_actions = post_actions || $1`, [{ type: "rabbit" }]);
+      await pgClients["casino"].none(`UPDATE poker_rooms SET post_actions = post_actions || $1 WHERE rid=$2`, [
+         [{ type: "rabbit" }],
+         rid,
+      ]);
+      return res.status(200).json({});
+   } catch (error) {
+      console.log({ src, error });
+      return res.status(500).json({ error });
+   }
+};
+export const pkRoomPostShow = async (req: Request, res: Response) => {
+   const src = "pkRoomPostShow";
+   const { sid, sub, name, rid: userRid } = res.locals.user;
+   const { rid } = req.params;
+   if (rid !== userRid) return res.status(400).json({ src, error: "You are not in this room" });
+   try {
+      const { serverRoom } = await libPoker_getRoomData({ rid });
+      const { data } = serverRoom || {};
+      const { game_players = [] } = data || {};
+      const playerSeat = game_players.findIndex((user) => user?.sub === sub);
+      if (playerSeat === -1) return res.status(400).json({ src, error: "You are not seated player" });
+      await pgClients["casino"].none(`UPDATE poker_rooms SET post_actions = post_actions || $1 WHERE rid=$2`, [
+         [{ type: "show", seat: playerSeat }],
+         rid,
+      ]);
+
       return res.status(200).json({});
    } catch (error) {
       console.log({ src, error });

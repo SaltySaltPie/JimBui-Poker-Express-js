@@ -9,7 +9,7 @@ import cookieParser from "cookie-parser";
 import devRouter from "./routers/dev/router";
 import { Server } from "socket.io";
 import http from "http";
-import pokerRouter from "./routers/pokerRouter";
+import pokerRouter from "./routers/poker/router";
 import { mwCheckJWT } from "./middlewares/mwCheckJWT";
 import userRouter from "./routers/userRouter";
 import { sioRouter } from "./routers/socket.ioRouter";

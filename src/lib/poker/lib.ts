@@ -5,10 +5,11 @@ import { io } from "../../app";
 import { pgClients } from "../../config/postgres";
 import { TUnknownObj, TUserCache } from "../../types/common";
 import {
-   TPokerPgRoomSchema,
+   TPg_PokerRoomSchema,
    TPokerPlayerHand,
    TPokerPostActionParsed,
-   TPokerRoomData,
+   TPokerRoomConfigParsed,
+   TPokerRoomDataParsed,
    TPokerRound,
    TPokerScoreboardLine,
 } from "../../types/poker/types";
@@ -17,6 +18,7 @@ import { TLibUserUser, libUser_getUsers } from "../user/lib";
 import pgInsertOrUpdateOnConflict from "../../utils/postgres/pgInsertOrUpdateOnConflict";
 import { TPokerSolverSolved } from "../../types/pokersolver";
 import { jsArrayFindNextNonNull } from "../../utils/js/jsArrayFindNextNonNull";
+import { libApp_log } from "../app/lib";
 
 export const libPoker_calculateHands = ({ hands, community_cards = [] }: TLibPoker_calculateHandsParams) =>
    hands.map((cards): TPokerPlayerHand | null => {
@@ -35,9 +37,84 @@ type TLibPoker_calculateHandsParams = {
    community_cards?: string[];
 };
 
-export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTickParams) => {
+export const libPoker_startRoom = async ({ rid, config }: TLibPoker_startRoomParams) => {
+   const { serverRoom } = await libPoker_getRoomData({ rid });
+   const { status, data, players } = serverRoom;
+   const { sb_index, round } = data;
+   const finalConfig: TPokerRoomConfigParsed = { timeoutMs: 10000, ...config };
+   if (status !== "idle" && round !== "post") return { error: "Room is not idling" };
+
+   const new_game_players = players;
+   const seats = new_game_players.map((player, i) => (player ? i : null));
+   const seatsNoNull = seats.filter((seatIndex) => seatIndex != null) as number[];
+   const playerCount = new_game_players.filter(Boolean).length;
+
+   const new_status = "playing";
+   if (playerCount < 2) return { error: "Not enough players" };
+   const new_sb_index = seatsNoNull.reduce(
+      (prev, curr) => (curr > sb_index && (prev < sb_index || prev === sb_index) ? curr : prev),
+      Math.min(...seatsNoNull)
+   );
+   const seatOrderIndex = seatsNoNull.findIndex((seat) => seat === new_sb_index);
+   const new_play_order = [...seatsNoNull.slice(seatOrderIndex), ...seatsNoNull.slice(0, seatOrderIndex)];
+   const new_play_order_index = 0;
+
+   const new_round = "pre";
+   const new_nextTimeOut = Date.now() + finalConfig.timeoutMs;
+
+   const new_deck = libPoker_generateCardDeck().shuffledDeck;
+   const new_player_hands = libPoker_calculateHands({
+      hands: seats.map((seat) => (seat != null ? new_deck.splice(0, 2) : null)),
+   });
+
+   const new_stake = 2;
+   // [0 ,1 , 2 ,3]
+   const new_round_pot: (null | number)[] = [...Array(9)].map(() => null);
+   const bbSeat = new_play_order.at(-1) as number;
+   new_round_pot.splice(bbSeat, 1, new_stake);
+   const sbSeat = new_play_order.at(-2) as number;
+   new_round_pot.splice(sbSeat, 1, new_stake / 2);
+
+   const newData: TPokerRoomDataParsed = {
+      ...data,
+      game_players: new_game_players,
+      sb_index: new_sb_index,
+      play_order: new_play_order,
+      play_order_index: new_play_order_index,
+      round: new_round,
+      nextTimeOut: new_nextTimeOut,
+      deck: new_deck,
+      player_hands: new_player_hands,
+      community_cards: [],
+      round_pot: new_round_pot,
+      pot: [],
+      stake: new_stake,
+      player_action: null,
+      previous_player_action: null,
+      players_action: [...Array(9)].map(() => null),
+      winnerSeats: [],
+   };
+   console.log({ newData });
+   // * update data on PG for this room
+   const pgPayload = { rid, status: new_status, data: newData, last_update: Date.now(), config: finalConfig };
+   await pgInsertOrUpdateOnConflict({
+      db: "casino",
+      columns: Object.keys(pgPayload),
+      table: "poker_rooms",
+      inputs: [pgPayload],
+      conflictCols: ["rid"],
+   });
+
+   await libPoker_updateRoomDataForPlayers({ rid, roomData: { ...serverRoom, status: new_status, data: newData } });
+   setTimeout(() => libPoker_resolveGameTick({ rid, pollId: Date.now() }), 1000);
+};
+type TLibPoker_startRoomParams = { rid: string; config?: Partial<TPokerRoomConfigParsed> };
+
+export const libPoker_resolveGameTick = async ({ rid, pollId }: TLibPoker_resolveGameTickParams): Promise<any> => {
+   const { log } = libApp_log({ enable: true, src: pollId });
    const { clientRoom, rawRoom, serverRoom } = await libPoker_getRoomData({ rid });
-   const { data, post_action_parsed = [] } = serverRoom;
+   const { data, post_action_parsed = [], config, players = [] } = serverRoom;
+   const { timeoutMs = 10000 } = config;
    const {
       nextTimeOut,
       game_players,
@@ -58,30 +135,98 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
    } = data;
    const isTimedOut = Date.now() - nextTimeOut > 2000;
 
-   // if (round === "post" && isTimedOut)
-   //    return libPoker_startRoom({ rid });
-
-   if (!player_action && !isTimedOut) {
-      // setTimeout(() => libPoker_resolveGameTick({ rid }), 1000);
-      //TODO: polling logic here
-      return;
-   }
-
    const seatIndex = play_order[play_order_index];
+
+   let next_players = players;
 
    let next_pot = pot;
    let next_round_pot = round_pot;
    let next_stake = stake;
    let next_play_order = play_order;
    let next_play_order_index = play_order_index;
-   let next_nextTimeOut = Date.now() + 1000 * 10;
-   let next_round = round;
+   let next_nextTimeOut = Date.now() + timeoutMs;
+   let next_round: TPokerRound = round;
    let next_deck = deck;
    let next_community_cards = community_cards;
    let next_player_hands = player_hands;
    let next_scoreboard = scoreboard;
    let next_players_action = players_action;
    let next_winnerSeats: number[] = [];
+
+   if (round === "post") {
+      if (!isTimedOut) {
+         if (post_action_parsed.length > 0) {
+            // * handling post game requests
+            post_action_parsed.forEach((action) => {
+               if (action.type === "standup") next_players = next_players.filter((_, i) => i !== action.seat);
+               if (action.type === "rabbit" && next_community_cards.length < 5)
+                  next_community_cards.push(...next_deck.splice(0, 5 - next_community_cards.length));
+               if (action.type === "show")
+                  next_player_hands = next_player_hands.map((hand, i) =>
+                     hand && i === action.seat ? { ...hand, show: true } : hand
+                  );
+            });
+            // * removing processed post game requests
+            await pgClients["casino"].none(
+               `UPDATE poker_rooms SET post_actions=(SELECT post_actions[${
+                  post_action_parsed.length + 1
+               }:] FROM poker_rooms WHERE rid=$1) WHERE rid=$1`,
+               [rid]
+            );
+            const newData = {
+               ...data,
+               community_cards: next_community_cards,
+               deck: next_deck,
+               player_hands: next_player_hands,
+            };
+            const pgPayload: { rid: string; data: TPokerRoomDataParsed; players: (string | null)[] } = {
+               rid,
+               players: next_players.map((player) => (player ? player.sub : null)),
+               data: newData,
+            };
+            await pgInsertOrUpdateOnConflict({
+               inputs: [pgPayload],
+               db: "casino",
+               columns: Object.keys(pgPayload),
+               table: "poker_rooms",
+               conflictCols: ["rid"],
+            });
+            await libPoker_updateRoomDataForPlayers({
+               rid,
+               roomData: { ...serverRoom, data: newData, players: next_players },
+            });
+            log("Resolved all post game demands");
+         }
+         setTimeout(() => libPoker_resolveGameTick({ rid, pollId }), 1000);
+         log("Post game waiting to time out");
+         return;
+      }
+
+      // * restarting game
+      if (players.length > 1) {
+         log("Retarting room");
+         libPoker_startRoom({ rid });
+         return;
+      }
+      // * stopping game due to not enough players
+      const pgPayload: Partial<TPg_PokerRoomSchema> = { rid, status: "idle" };
+      await pgInsertOrUpdateOnConflict({
+         inputs: [pgPayload],
+         db: "casino",
+         columns: Object.keys(pgPayload),
+         table: "poker_rooms",
+         conflictCols: ["rid"],
+      });
+      await libPoker_updateRoomDataForPlayers({ rid, roomData: { ...serverRoom, status: "idle" } });
+      log("Stopping game due to not enough players");
+      return;
+   }
+
+   if (!player_action && !isTimedOut) {
+      log("Player has not actioned, polling");
+      setTimeout(() => libPoker_resolveGameTick({ rid, pollId }), 1000);
+      return;
+   }
 
    if (player_action === "call") {
       next_round_pot.splice(seatIndex, 1, stake);
@@ -91,11 +236,7 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
       next_play_order_index === play_order_index + 1;
       next_players_action.splice(seatIndex, 1, "check");
    }
-   if (
-      player_action === "fold"
-      // * timeout logic here
-      // || isTimedOut
-   ) {
+   if (player_action === "fold" || isTimedOut) {
       next_play_order = next_play_order.filter((seatNum) => seatNum !== seatIndex);
       next_players_action.splice(seatIndex, 1, "fold");
    }
@@ -110,7 +251,6 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
 
    const handleWinners = () => {
       console.log("Handling Winners!");
-      console.log({ next_pot_after: next_pot });
 
       next_pot.forEach((potAmount, seat) => {
          if (!potAmount) return;
@@ -164,7 +304,7 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
       });
    };
 
-   if (next_play_order.length === 1 && next_round !== "post") {
+   if (next_play_order.length === 1) {
       next_round = "post";
       next_pot = next_round_pot.map((seatPot, i) => (seatPot != null ? seatPot + (next_pot[i] || 0) : next_pot[i]));
       console.log({ next_pot_before: next_pot });
@@ -172,14 +312,7 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
    }
 
    const isLastPlayerOrder = play_order_index === play_order.length - 1;
-   if (round === "post") {
-      post_action_parsed.forEach((action) => {
-         if (action.type === "rabbit" && next_community_cards.length < 5) {
-            const newCards = next_deck.splice(0, 5 - next_community_cards.length);
-            next_community_cards.push(...newCards);
-         }
-      });
-   } else if (isLastPlayerOrder && player_action !== "raise" && next_play_order.length > 1) {
+   if (isLastPlayerOrder && player_action !== "raise" && next_play_order.length > 1) {
       console.log(`Last play order`);
       next_players_action = [...Array(9)].map(() => null);
       next_stake = 0;
@@ -223,7 +356,7 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
       next_play_order_index = play_order_index + 1;
    }
 
-   const next_RoomData: TPokerRoomData = {
+   const next_RoomData: TPokerRoomDataParsed = {
       ...data,
       pot: next_pot,
       round_pot: next_round_pot,
@@ -243,14 +376,14 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
       winnerSeats: next_winnerSeats,
    };
    console.log({ next_RoomData });
-   const pgPayload: { rid: string; data: TPokerRoomData; previous_data: TPokerRoomData } = {
+   const pgPayload: { rid: string; data: TPokerRoomDataParsed; previous_data: TPokerRoomDataParsed } = {
       rid,
       data: next_RoomData,
       previous_data: data,
    };
 
    await pgInsertOrUpdateOnConflict({
-      client: "casino",
+      db: "casino",
       columns: Object.keys(pgPayload),
       inputs: [pgPayload],
       table: "poker_rooms",
@@ -259,94 +392,15 @@ export const libPoker_resolveGameTick = async ({ rid }: TLibPoker_resolveGameTic
 
    // * updating latest game state to sockets in room
    await libPoker_updateRoomDataForPlayers({ roomData: { ...serverRoom, data: next_RoomData }, rid });
-   // if (next_round !== "post") 
-   // setTimeout(() => libPoker_resolveGameTick({ rid }), 1000);
+   // if (next_round !== "post")
+   log("End of Logic");
+   setTimeout(() => libPoker_resolveGameTick({ rid, pollId }), 1000);
+   return;
 };
-type TLibPoker_resolveGameTickParams = {
-   rid: string;
-};
-
-export const libPoker_startRoom = async ({ rid }: TLibPoker_startRoomParams) => {
-   const { serverRoom } = await libPoker_getRoomData({ rid });
-   const { status, data, players } = serverRoom;
-   const { sb_index, round } = data;
-   if (status !== "idle" && round !== "post") return { error: "Room is not idling" };
-
-   // const seatSubs = players.map((player) => (player ? player.sub : null));
-   const new_game_players = players;
-   const seats = new_game_players.map((player, i) => (player ? i : null));
-   const seatsNoNull = seats.filter((seatIndex) => seatIndex != null) as number[];
-   const playerCount = new_game_players.filter(Boolean).length;
-
-   const new_status = "playing";
-   if (playerCount < 2) return { error: "Not enough players" };
-   const new_sb_index = seatsNoNull.reduce(
-      (prev, curr) => (curr > sb_index && (prev < sb_index || prev === sb_index) ? curr : prev),
-      Math.min(...seatsNoNull)
-   );
-   const seatOrderIndex = seatsNoNull.findIndex((seat) => seat === new_sb_index);
-   const new_play_order = [...seatsNoNull.slice(seatOrderIndex), ...seatsNoNull.slice(0, seatOrderIndex)];
-   const new_play_order_index = 0;
-
-   const new_round = "pre";
-   const new_nextTimeOut = Date.now() + 10 * 1000;
-
-   const new_deck = libPoker_generateCardDeck().shuffledDeck;
-   const new_player_hands = libPoker_calculateHands({
-      hands: seats.map((seat) => (seat != null ? new_deck.splice(0, 2) : null)),
-   });
-
-   const new_stake = 2;
-   // [0 ,1 , 2 ,3]
-   const new_round_pot: (null | number)[] = [...Array(9)].map(() => null);
-   const bbSeat = new_play_order.at(-1) as number;
-   new_round_pot.splice(bbSeat, 1, new_stake);
-   const sbSeat = new_play_order.at(-2) as number;
-   new_round_pot.splice(sbSeat, 1, new_stake / 2);
-
-   const newData: TPokerRoomData = {
-      ...data,
-      game_players: new_game_players,
-      sb_index: new_sb_index,
-      play_order: new_play_order,
-      play_order_index: new_play_order_index,
-      round: new_round,
-      nextTimeOut: new_nextTimeOut,
-      deck: new_deck,
-      player_hands: new_player_hands,
-      community_cards: [],
-      round_pot: new_round_pot,
-      pot: [],
-      stake: new_stake,
-      player_action: null,
-      previous_player_action: null,
-      players_action: [...Array(9)].map(() => null),
-      winnerSeats: [],
-   };
-   console.log({ newData });
-   // * update data on PG for this room
-   const pgPayload = {
-      rid,
-      status: new_status,
-      data: newData,
-      last_update: Date.now(),
-   };
-   await pgInsertOrUpdateOnConflict({
-      client: "casino",
-      columns: Object.keys(pgPayload),
-      table: "poker_rooms",
-      inputs: [pgPayload],
-      conflictCols: ["rid"],
-   });
-
-   await libPoker_updateRoomDataForPlayers({ rid, roomData: { players, status: new_status, data: newData } });
-};
-type TLibPoker_startRoomParams = {
-   rid: string;
-};
+type TLibPoker_resolveGameTickParams = { rid: string; pollId: number };
 
 export const libPoker_updateRoomDataForPlayers = async ({ roomData, rid, socketIds }: TLibPoker_updateAllPlayers) => {
-   const { players, status, data } = roomData;
+   const { players, status, data, config } = roomData;
    // * map out all seated players sub
    const seatedSubs = players.map((seat) => (seat ? seat.sub : null)).filter(Boolean) as string[];
 
@@ -356,41 +410,33 @@ export const libPoker_updateRoomDataForPlayers = async ({ roomData, rid, socketI
    const playerSockets = allSockets.filter((socket) => seatedSubs.includes(socket.data.user.sub));
 
    // * broadcast to sockets in room
-   const viewerRoomData = {
-      players,
-      status: status,
-      data: libPoker_maskRoomData(data),
-   };
+   const viewerRoomData = { players, status: status, config, data: libPoker_maskRoomData(data) };
    viewerSockets.forEach((socket) => socket.emit("updateRoom", viewerRoomData));
    playerSockets.forEach((socket) => {
       const seatIndex = players.findIndex((seat) => seat && seat.sub === socket.data.user.sub);
-      const playerRoomData = {
-         players,
-         status: status,
-         data: libPoker_maskRoomData(data, seatIndex),
-      };
+      const playerRoomData = { ...viewerRoomData, data: libPoker_maskRoomData(data, seatIndex) };
       socket.emit("updateRoom", playerRoomData);
    });
 };
 
-type TLibPoker_updateAllPlayers = {
-   rid: string;
-   roomData: TLibPokerServerRoomData;
-   socketIds?: string[];
-};
+type TLibPoker_updateAllPlayers = { rid: string; roomData: TLibPokerServerRoomData; socketIds?: string[] };
 
 export const libPoker_getRoomData = async ({ rid }: TLibPoker_getRoomData) => {
    //* getting raw pg room columns
-   const rawRoom = await pgClients["casino"].one<TPokerPgRoomSchema>(
-      `SELECT players,status,data,last_update,post_actions FROM poker_rooms WHERE rid=$1`,
-      [rid]
-   );
+   const rawRoom = await pgClients["casino"].one<
+      Pick<TPg_PokerRoomSchema, "players" | "status" | "data" | "last_update" | "post_actions" | "config">
+   >(`SELECT players,status,data,last_update,post_actions,config FROM poker_rooms WHERE rid=$1`, [rid]);
    const players = await libUser_getUsers({ subs: rawRoom.players.filter(Boolean) as string[] }).then(({ players }) =>
       rawRoom.players.map((sub) => players.find((player) => player?.sub === sub) || null)
    );
-   const parsedRoomData = JSONtryParse<TPokerRoomData>(rawRoom?.data, {});
-
-   const commonRoomData = { players, status: rawRoom.status, last_update: rawRoom.last_update };
+   const parsedRoomData = JSONtryParse<TPokerRoomDataParsed>(rawRoom.data, {});
+   const parsedConfigData = JSONtryParse<TPokerRoomConfigParsed>(rawRoom.config, {});
+   const commonRoomData = {
+      players,
+      status: rawRoom.status,
+      last_update: rawRoom.last_update,
+      config: parsedConfigData,
+   };
    const serverRoom: TLibPokerServerRoomData = {
       ...commonRoomData,
       data: parsedRoomData,
@@ -398,32 +444,32 @@ export const libPoker_getRoomData = async ({ rid }: TLibPoker_getRoomData) => {
          rawRoom.post_actions?.map((str) => JSONtryParse<TPokerPostActionParsed>(str)).filter(Boolean) || [],
    };
    const clientRoom: TLibPokerClientRoomData = { ...commonRoomData, data: libPoker_maskRoomData(parsedRoomData) };
-
    return { rawRoom, serverRoom, clientRoom };
 };
-
+type TLibPoker_getRoomData = { rid: string };
 export type TLibPokerServerRoomData = {
    players: (TLibUserUser | null)[];
    status: string;
-   data: TPokerRoomData;
+   data: TPokerRoomDataParsed;
    last_update?: number;
+   config: TPokerRoomConfigParsed;
    post_action_parsed?: TPokerPostActionParsed[];
 };
 export type TLibPokerClientRoomData = {
    players: (TLibUserUser | null)[];
    status: string;
-   data: Partial<TPokerRoomData>;
+   config: TPokerRoomConfigParsed;
+   data: Partial<TPokerRoomDataParsed>;
 };
 
-export const libPoker_maskRoomData = (roomData: TPokerRoomData, seatIndex?: number): Partial<TPokerRoomData> => {
+export const libPoker_maskRoomData = (
+   roomData: TPokerRoomDataParsed,
+   seatIndex?: number
+): Partial<TPokerRoomDataParsed> => {
    const { deck, player_hands: player_cards = [], ...rest } = roomData;
    if (seatIndex == null) return rest;
    const next_player_cards = player_cards.map((set, i) => (i === seatIndex || set?.show ? set : null));
    return { ...rest, player_hands: next_player_cards };
-};
-
-type TLibPoker_getRoomData = {
-   rid: string;
 };
 
 export const libPoker_generateCardDeck = () => {

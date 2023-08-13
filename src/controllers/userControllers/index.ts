@@ -25,7 +25,7 @@ export const uConfigUpdateName = async (req: Request, res: Response) => {
       await pgInsertOrUpdateOnConflict({
          inputs: [payload],
          table: "users",
-         client: "casino",
+         db: "casino",
          columns: Object.keys(payload),
          conflictCols: ["sub"],
       });
