@@ -5,7 +5,7 @@ import { pgClients } from "../../config/postgres";
 import { io } from "../../app";
 import { libGeneral_updateUserCache } from "../../lib/general/lib";
 import {
-   libPoker_calculateHands,
+   libPoker_calculateHand,
    libPoker_generateCardDeck,
    libPoker_getRoomData,
    libPoker_maskRoomData,
@@ -13,7 +13,12 @@ import {
    libPoker_startRoom,
    libPoker_updateRoomDataForPlayers,
 } from "../../lib/poker/lib";
-import { TPokerPlayerHand, TPokerRoomDataParsed } from "../../types/poker/types";
+import {
+   TPg_PokerRoomSchema,
+   TPokerPlayerHand,
+   TPokerPostActionParsed,
+   TPokerRoomDataParsed,
+} from "../../types/poker/types";
 import { jsArrayFindNextNonNull } from "../../utils/js/jsArrayFindNextNonNull";
 import pgInsertOrUpdateOnConflict from "../../utils/postgres/pgInsertOrUpdateOnConflict";
 import { TPokerSolverSolved } from "../../types/pokersolver";
@@ -127,19 +132,26 @@ export const pkRoomStandUp = async (req: Request, res: Response) => {
       if (rid !== userRid) return res.status(400).json({ src, error: "YOU ARE NOT IN THIS ROOM" });
 
       // * get list of players
-      const { players, status } = await pgClients["casino"].one<{ players: string[]; status: string }>(
+      const { players, status } = await pgClients["casino"].one<Pick<TPg_PokerRoomSchema, "status" | "players">>(
          `SELECT players,status FROM poker_rooms WHERE rid=$1`,
          [rid]
       );
 
-      if (status !== "idle") return res.status(200).json({});
-
       // * check if user is seated
       const isUserSeated = players.includes(sub);
       if (!isUserSeated) return res.status(400).json({ src, error: "You are not seated" });
+      const userSeat = players.findIndex((playerSub) => playerSub === sub);
+
+      // * add to post game actions queue if game is running
+      if (status !== "idle") {
+         await pgClients["casino"].none(`UPDATE poker_rooms SET post_actions = post_actions || $1 WHERE rid=$2`, [
+            [{ type: "standup", seat: userSeat } satisfies TPokerPostActionParsed],
+            rid,
+         ]);
+         return res.status(200).json({});
+      }
 
       // * update user seat
-      const userSeat = players.findIndex((playerSub) => playerSub === sub);
       await pgClients["casino"].none(`UPDATE poker_rooms SET players[$1] = $2 WHERE rid=$3`, [userSeat + 1, null, rid]);
 
       io.to(rid).emit("chat", { sender: "Admin", msg: `${name} has stood up` });

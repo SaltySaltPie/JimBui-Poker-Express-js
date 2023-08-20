@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from "express";
-import { io } from "../app";
-import { pgClients } from "../config/postgres";
-import { libGeneral_updateUserCache } from "../lib/general/lib";
+import { io } from "../../app";
+import { pgClients } from "../../config/postgres";
+import { libGeneral_updateUserCache } from "../../lib/general/lib";
 export const mwCheckSocketIo = async (req: Request, res: Response, next: NextFunction) => {
    const src = "mwCheckSocketIo";
    try {
@@ -12,11 +12,7 @@ export const mwCheckSocketIo = async (req: Request, res: Response, next: NextFun
 
       //* get user name
       const pgUser = await pgClients["casino"].oneOrNone(`SELECT name,rid FROM users WHERE sub=$1`, [sub]);
-      const userData = {
-         ...pgUser,
-         sub,
-         sid: currSid,
-      };
+      const userData = { ...pgUser, sub, sid: currSid };
 
       const { socket } = libGeneral_updateUserCache({ res, newUserCache: userData });
       socket.emit("user", pgUser);
