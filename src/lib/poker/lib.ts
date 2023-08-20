@@ -222,7 +222,8 @@ export const libPoker_resolveGameTick = async ({ rid, pollId }: TLibPoker_resolv
       });
    };
    const handleStopGame = async () => {
-      const pgPayload: Partial<TPg_PokerRoomSchema> = { rid, status: "idle" };
+      const newData: Partial<TPokerRoomDataParsed> = { ...data, player_hands: [...Array(9)].map(() => null) };
+      const pgPayload: Partial<TPg_PokerRoomSchema> = { rid, status: "idle", data: JSON.stringify(newData) };
       log("Stopping game");
       await pgInsertOrUpdateOnConflict({
          inputs: [pgPayload],
