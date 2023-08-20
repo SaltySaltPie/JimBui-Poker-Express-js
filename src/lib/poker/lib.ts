@@ -313,7 +313,15 @@ export const libPoker_resolveGameTick = async ({ rid, pollId }: TLibPoker_resolv
       return;
    }
    if (isTimedOut) {
-      next_player_action = next_stake === seatRoundPot ? "check" : "fold";
+      if (next_stake === seatRoundPot) next_player_action = "check";
+      else {
+         next_player_action = "fold";
+         // * queue up standup/kick player due to timeout
+         await pgClients["casino"].none(`UPDATE poker_rooms SET post_actions = post_actions || $1 WHERE rid=$2`, [
+            [{ type: "standup", seat: seatIndex } satisfies TPokerPostActionParsed],
+            rid,
+         ]);
+      }
    }
 
    if (next_player_action === "call") {
