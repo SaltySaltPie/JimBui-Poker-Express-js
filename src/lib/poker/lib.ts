@@ -200,7 +200,11 @@ export const libPoker_resolveGameTick = async ({ rid, pollId }: TLibPoker_resolv
 
       if (next_play_order.length > 1)
          next_player_hands = next_player_hands.map((hand, i) =>
-            next_winnerSeats.includes(i) && hand ? { ...hand, show: true, winner: true } : hand
+            next_winnerSeats.includes(i) && hand
+               ? { ...hand, show: true, winner: true }
+               : next_play_order.includes(i) && hand
+               ? { ...hand, show: true }
+               : hand
          );
       const totalPot = next_pot.reduce((prev, curr) => (prev || 0) + (curr || 0), 0) as number;
 
