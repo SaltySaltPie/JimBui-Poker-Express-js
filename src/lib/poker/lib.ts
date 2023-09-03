@@ -56,8 +56,11 @@ export const libPoker_startRoom = async ({ rid, config }: TLibPoker_startRoomPar
       (prev, curr) => (curr > sb_index && (prev < sb_index || prev === sb_index) ? curr : prev),
       Math.min(...seatsNoNull)
    );
-   const seatOrderIndex = seatsNoNull.findIndex((seat) => seat === new_sb_index);
-   const new_play_order = [...seatsNoNull.slice(seatOrderIndex), ...seatsNoNull.slice(0, seatOrderIndex)];
+   const sbSeatOrderIndex = seatsNoNull.findIndex((seat) => seat === new_sb_index);
+
+   let tempSeatsNoNull = seatsNoNull;
+   const new_play_order = [...tempSeatsNoNull.splice(sbSeatOrderIndex, 2), ...tempSeatsNoNull];
+   new_play_order.push(...new_play_order.splice(0, 2));
    const new_play_order_index = 0;
 
    const new_round = "pre";
@@ -401,7 +404,7 @@ export const libPoker_resolveGameTick = async ({ rid, pollId }: TLibPoker_resolv
          //* get player ranking
          handleWinners();
       }
-   } else if (next_player_action !== "raise") {
+   } else if (next_player_action !== "raise" && next_player_action !== "fold") {
       next_play_order_index = play_order_index + 1;
    }
 
